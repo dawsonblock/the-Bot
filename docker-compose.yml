@@ -1,0 +1,16 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: aeon_postgres
+    environment:
+      POSTGRES_USER: aeon
+      POSTGRES_PASSWORD: aeon
+      POSTGRES_DB: aeon
+    ports:
+      - "5432:5432"
+    volumes:
+      - aeon_pgdata:/var/lib/postgresql/data
+      - ./aeon/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  aeon_pgdata:

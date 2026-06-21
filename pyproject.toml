@@ -1,0 +1,19 @@
+[project]
+name = "aeon"
+version = "0.1.0"
+description = "Event-sourced verifier-first AI operating spine"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "pydantic-settings",
+    "psycopg[binary]",
+    "python-dotenv",
+    "pytest",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

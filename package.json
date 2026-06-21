@@ -1,0 +1,31 @@
+{
+  "name": "aeon",
+  "version": "0.1.0",
+  "description": "Event-sourced verifier-first AI operating spine",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/type-provider-typebox": "^6.1.0",
+    "dotenv": "^16.5.0",
+    "drizzle-orm": "^0.44.5",
+    "fastify": "^5.3.2",
+    "pg": "^8.16.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "@types/pg": "^8.15.2",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
