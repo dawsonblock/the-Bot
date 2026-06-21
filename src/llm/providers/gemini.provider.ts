@@ -1,10 +1,15 @@
 import { LLMProvider } from "../llm-provider.js";
 import { LLMProviderError } from "../llm-errors.js";
+import { DEFAULT_PROVIDER_TIMEOUT_MS, fetchWithTimeout } from "../fetch-with-timeout.js";
 
 export class GeminiProvider implements LLMProvider {
   readonly name = "gemini";
 
-  constructor(private readonly apiKey?: string, private readonly defaultModel?: string) {}
+  constructor(
+    private readonly apiKey?: string,
+    private readonly defaultModel?: string,
+    private readonly timeoutMs = DEFAULT_PROVIDER_TIMEOUT_MS
+  ) {}
 
   async generateJSON<T>(input: { system: string; prompt: string; schemaName: string }): Promise<T> {
     this.requireApiKey();
@@ -15,11 +20,14 @@ export class GeminiProvider implements LLMProvider {
   async generateText(input: { system: string; prompt: string }): Promise<string> {
     this.requireApiKey();
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${this.defaultModel ?? "gemini-2.0-flash"}:generateContent?key=${this.apiKey}`,
+    const response = await fetchWithTimeout(
+      `https://generativelanguage.googleapis.com/v1beta/models/${this.defaultModel ?? "gemini-2.0-flash"}:generateContent`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": this.apiKey ?? ""
+        },
         body: JSON.stringify({
           contents: [
             {
@@ -30,7 +38,8 @@ export class GeminiProvider implements LLMProvider {
           ],
           generationConfig: { responseMimeType: "application/json" }
         })
-      }
+      },
+      this.timeoutMs
     );
 
     if (!response.ok) {

@@ -1,10 +1,15 @@
 import { LLMProvider } from "../llm-provider.js";
 import { LLMProviderError } from "../llm-errors.js";
+import { DEFAULT_PROVIDER_TIMEOUT_MS, fetchWithTimeout } from "../fetch-with-timeout.js";
 
 export class OllamaProvider implements LLMProvider {
   readonly name = "ollama";
 
-  constructor(private readonly baseUrl = "http://localhost:11434", private readonly defaultModel?: string) {}
+  constructor(
+    private readonly baseUrl = "http://localhost:11434",
+    private readonly defaultModel?: string,
+    private readonly timeoutMs = DEFAULT_PROVIDER_TIMEOUT_MS
+  ) {}
 
   async generateJSON<T>(input: { system: string; prompt: string; schemaName: string }): Promise<T> {
     const text = await this.generateText(input);
@@ -12,18 +17,22 @@ export class OllamaProvider implements LLMProvider {
   }
 
   async generateText(input: { system: string; prompt: string }): Promise<string> {
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.defaultModel ?? "llama3.1",
-        stream: false,
-        messages: [
-          { role: "system", content: input.system },
-          { role: "user", content: input.prompt }
-        ]
-      })
-    });
+    const response = await fetchWithTimeout(
+      `${this.baseUrl.replace(/\/$/, "")}/api/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.defaultModel ?? "llama3.1",
+          stream: false,
+          messages: [
+            { role: "system", content: input.system },
+            { role: "user", content: input.prompt }
+          ]
+        })
+      },
+      this.timeoutMs
+    );
 
     if (!response.ok) {
       throw new LLMProviderError(`Ollama API request failed: ${response.status}`, this.name);

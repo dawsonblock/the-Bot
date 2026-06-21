@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { PlanSchema } from "../schemas/plan.schema.js";
 
 export const ChatRequestSchema = z.object({
-  message: z.string().min(1),
+  message: z.string().min(1).transform((value) => value.trim()).pipe(z.string().min(1)),
   traceId: z.string().uuid().optional(),
   metadata: z.record(z.unknown()).default({})
 });
@@ -11,7 +12,7 @@ export const ChatResponseSchema = z.object({
   message: z.string(),
   requiresApproval: z.boolean().default(false),
   relatedEventIds: z.array(z.string().uuid()).default([]),
-  plan: z.unknown().optional(),
+  plan: PlanSchema.optional(),
   createdAt: z.date()
 });
 

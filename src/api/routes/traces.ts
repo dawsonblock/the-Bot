@@ -1,7 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { EventRepository, TraceRepository } from "../../db/index.js";
 
-export async function registerTraceRoutes(app: FastifyInstance, traces: TraceRepository) {
+export async function registerTraceRoutes(
+  app: FastifyInstance,
+  traces: TraceRepository,
+  events?: EventRepository
+) {
   app.get("/traces", async () => traces.listTraces());
 
   app.get("/traces/:traceId", async (request, reply) => {
@@ -19,6 +23,11 @@ export async function registerTraceRoutes(app: FastifyInstance, traces: TraceRep
     if (!trace) {
       return reply.code(404).send({ error: "Trace not found" });
     }
-    reply.redirect(`/events/${traceId}`);
+
+    if (!events) {
+      return reply.code(500).send({ error: "Event repository is not registered" });
+    }
+
+    return events.getEventsForTrace(traceId);
   });
 }

@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { EventRepository, TraceRepository } from "../../db/index.js";
+import { EventAppendService } from "../../core/event_append_service.js";
 import { LLMRouter } from "../../llm/llm-router.js";
 import { ChatRequestSchema, ChatResponseSchema } from "../../models/chat.model.js";
 import { PlannerService } from "../../planner/planner.service.js";
@@ -10,6 +11,7 @@ export async function registerChatRoutes(
   dependencies: {
     traces: TraceRepository;
     events: EventRepository;
+    eventAppend: EventAppendService;
     planner: PlannerService;
     llm: LLMRouter;
   }
@@ -27,7 +29,7 @@ export async function registerChatRoutes(
     const createdTraceId = traceId ?? (await dependencies.traces.createTrace(message)).traceId;
 
     if (!traceId) {
-      await dependencies.events.appendEvent({
+      await dependencies.eventAppend.append({
         traceId: createdTraceId,
         actor: "system",
         eventType: "trace_created",
@@ -35,7 +37,7 @@ export async function registerChatRoutes(
       });
     }
 
-    await dependencies.events.appendEvent({
+    await dependencies.eventAppend.append({
       traceId: createdTraceId,
       actor: "user",
       eventType: "user_message",
@@ -45,25 +47,41 @@ export async function registerChatRoutes(
     if (normalizedCommand === "show plan") {
       const events = await dependencies.events.getEventsForTrace(createdTraceId);
       const planEvents = events.filter((event) => event.eventType === "plan_created");
-      const latestPlanPayload = planEvents.at(-1)?.payload.plan;
+      const latestPlanEvent = planEvents.at(-1);
+      const latestPlanPayload = latestPlanEvent?.payload.plan;
 
       if (!latestPlanPayload) {
+        const assistantEvent = await dependencies.eventAppend.append({
+          traceId: createdTraceId,
+          actor: "assistant",
+          eventType: "assistant_message",
+          payload: { message: "No stored plan found for this trace." }
+        });
+
         return ChatResponseSchema.parse({
           traceId: createdTraceId,
           message: "No stored plan found for this trace.",
           requiresApproval: false,
-          relatedEventIds: [],
+          relatedEventIds: [assistantEvent.eventId],
           createdAt: new Date()
         });
       }
 
       const latestPlan = PlanSchema.parse(latestPlanPayload);
+      const requiresApproval = latestPlan.steps.some((step) => step.requiresApproval);
+      const message = latestPlan.summary;
+      const assistantEvent = await dependencies.eventAppend.append({
+        traceId: createdTraceId,
+        actor: "assistant",
+        eventType: "assistant_message",
+        payload: { message, plan: latestPlan }
+      });
 
       return ChatResponseSchema.parse({
         traceId: createdTraceId,
-        message: latestPlan.summary,
-        requiresApproval: false,
-        relatedEventIds: [planEvents.at(-1)!.eventId],
+        message,
+        requiresApproval,
+        relatedEventIds: [latestPlanEvent!.eventId, assistantEvent.eventId],
         plan: latestPlan,
         createdAt: new Date()
       });
@@ -71,11 +89,19 @@ export async function registerChatRoutes(
 
     if (normalizedCommand === "show trace" || normalizedCommand === "show events") {
       const events = await dependencies.events.getEventsForTrace(createdTraceId);
+      const message = `${events.length} event(s) recorded.`;
+      const assistantEvent = await dependencies.eventAppend.append({
+        traceId: createdTraceId,
+        actor: "assistant",
+        eventType: "assistant_message",
+        payload: { message }
+      });
+
       return ChatResponseSchema.parse({
         traceId: createdTraceId,
-        message: `${events.length} event(s) recorded.`,
+        message,
         requiresApproval: false,
-        relatedEventIds: events.map((event) => event.eventId),
+        relatedEventIds: [assistantEvent.eventId],
         createdAt: new Date()
       });
     }
@@ -83,7 +109,7 @@ export async function registerChatRoutes(
     if (!traceId) {
       const plan = await dependencies.planner.createPlanForTrace(createdTraceId);
       const assistantMessage = `Plan created: ${plan.summary}`;
-      const assistantEvent = await dependencies.events.appendEvent({
+      const assistantEvent = await dependencies.eventAppend.append({
         traceId: createdTraceId,
         actor: "assistant",
         eventType: "assistant_message",
@@ -100,7 +126,7 @@ export async function registerChatRoutes(
       });
     }
 
-    const assistantEvent = await dependencies.events.appendEvent({
+    const assistantEvent = await dependencies.eventAppend.append({
       traceId: createdTraceId,
       actor: "assistant",
       eventType: "assistant_message",
