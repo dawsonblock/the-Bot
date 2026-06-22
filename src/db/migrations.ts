@@ -9,6 +9,7 @@ export const migrations = [
     name: "001_event_integrity_fields",
     up: [
       "ALTER TABLE events ADD COLUMN IF NOT EXISTS sequence BIGINT",
+      "ALTER TABLE events ALTER COLUMN sequence SET NOT NULL",
       "ALTER TABLE events ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1",
       "ALTER TABLE events ADD COLUMN IF NOT EXISTS payload_hash TEXT",
       "ALTER TABLE events ADD COLUMN IF NOT EXISTS previous_event_hash TEXT",
@@ -18,9 +19,17 @@ export const migrations = [
       "ALTER TABLE events ADD CONSTRAINT events_type_nonempty CHECK (length(trim(event_type)) > 0)",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_trace_sequence ON events(trace_id, sequence)",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_idempotency ON events(trace_id, idempotency_key) WHERE idempotency_key IS NOT NULL",
-      "CREATE INDEX IF NOT EXISTS idx_events_trace_created ON events(trace_id, created_at)"
+      "CREATE INDEX IF NOT EXISTS idx_events_trace_created ON events(trace_id, created_at)",
+      "CREATE OR REPLACE FUNCTION prevent_event_mutation() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'events table is append-only'; END; $$ LANGUAGE plpgsql",
+      "DROP TRIGGER IF EXISTS events_no_update ON events",
+      "CREATE TRIGGER events_no_update BEFORE UPDATE ON events FOR EACH ROW EXECUTE FUNCTION prevent_event_mutation()",
+      "DROP TRIGGER IF EXISTS events_no_delete ON events",
+      "CREATE TRIGGER events_no_delete BEFORE DELETE ON events FOR EACH ROW EXECUTE FUNCTION prevent_event_mutation()",
     ],
     down: [
+      "DROP TRIGGER IF EXISTS events_no_delete ON events",
+      "DROP TRIGGER IF EXISTS events_no_update ON events",
+      "DROP FUNCTION IF EXISTS prevent_event_mutation()",
       "DROP INDEX IF EXISTS idx_events_trace_created",
       "DROP INDEX IF EXISTS idx_events_idempotency",
       "DROP INDEX IF EXISTS idx_events_trace_sequence",
@@ -31,12 +40,14 @@ export const migrations = [
       "ALTER TABLE events DROP COLUMN IF EXISTS previous_event_hash",
       "ALTER TABLE events DROP COLUMN IF EXISTS payload_hash",
       "ALTER TABLE events DROP COLUMN IF EXISTS schema_version",
-      "ALTER TABLE events DROP COLUMN IF EXISTS sequence"
-    ]
-  }
+      "ALTER TABLE events DROP COLUMN IF EXISTS sequence",
+    ],
+  },
 ];
 
-export async function runMigrations(pool: { query: (text: string, values?: unknown[]) => Promise<unknown> }) {
+export async function runMigrations(pool: {
+  query: (text: string, values?: unknown[]) => Promise<unknown>;
+}) {
   for (const migration of migrations) {
     for (const statement of migration.up) {
       await pool.query(statement);
@@ -44,7 +55,9 @@ export async function runMigrations(pool: { query: (text: string, values?: unkno
   }
 }
 
-export async function rollbackMigrations(pool: { query: (text: string, values?: unknown[]) => Promise<unknown> }) {
+export async function rollbackMigrations(pool: {
+  query: (text: string, values?: unknown[]) => Promise<unknown>;
+}) {
   for (const migration of [...migrations].reverse()) {
     for (const statement of migration.down.reverse()) {
       await pool.query(statement);
@@ -53,7 +66,7 @@ export async function rollbackMigrations(pool: { query: (text: string, values?: 
 }
 
 export async function migrate(pool: MigrationPool) {
-  const client = await pool.connect() as MigrationClient;
+  const client = (await pool.connect()) as MigrationClient;
   try {
     await client.query("BEGIN");
     for (const migration of migrations) {
@@ -71,7 +84,7 @@ export async function migrate(pool: MigrationPool) {
 }
 
 export async function rollback(pool: MigrationPool) {
-  const client = await pool.connect() as MigrationClient;
+  const client = (await pool.connect()) as MigrationClient;
   try {
     await client.query("BEGIN");
     for (const migration of [...migrations].reverse()) {

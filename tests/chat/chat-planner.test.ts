@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import Fastify, { FastifyInstance } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../../src/api/app.js";
-import type { TraceRepository, EventRepository } from "../../src/db/index.js";
+import type {
+  EventAppendService,
+  EventRepository,
+  TraceRepository,
+} from "../../src/db/index.js";
 import type { PlannerService } from "../../src/planner/planner.service.js";
 import type { LLMRouter } from "../../src/llm/llm-router.js";
 import type { Plan } from "../../src/schemas/plan.schema.js";
@@ -17,46 +21,84 @@ const validPlan: Plan = {
       actionType: "inspect",
       expectedResult: "Project files and current state are understood.",
       riskLevel: "low",
-      requiresApproval: false
-    }
+      requiresApproval: false,
+    },
   ],
   assumptions: ["No autonomous execution is allowed in this milestone."],
-  risks: ["LLM may return an invalid plan schema."]
+  risks: ["LLM may return an invalid plan schema."],
 };
 
 async function createApp() {
   const traces = {
-    createTrace: vi.fn().mockResolvedValue({ traceId: randomUUID(), goal: "Build AEON planner", status: "running", outcome: null, startTime: new Date(), endTime: null, metrics: {}, createdAt: new Date() }),
-    getTrace: vi.fn().mockResolvedValue({ traceId: randomUUID(), goal: "Build AEON planner", status: "running", outcome: null, startTime: new Date(), endTime: null, metrics: {}, createdAt: new Date() }),
+    createTrace: vi
+      .fn()
+      .mockResolvedValue({
+        traceId: randomUUID(),
+        goal: "Build AEON planner",
+        status: "running",
+        outcome: null,
+        startTime: new Date(),
+        endTime: null,
+        metrics: {},
+        createdAt: new Date(),
+      }),
+    getTrace: vi
+      .fn()
+      .mockResolvedValue({
+        traceId: randomUUID(),
+        goal: "Build AEON planner",
+        status: "running",
+        outcome: null,
+        startTime: new Date(),
+        endTime: null,
+        metrics: {},
+        createdAt: new Date(),
+      }),
     listTraces: vi.fn().mockResolvedValue([]),
-    completeTrace: vi.fn().mockResolvedValue(null)
+    completeTrace: vi.fn().mockResolvedValue(null),
   };
 
   const events = {
-    appendEvent: vi.fn().mockResolvedValue({ eventId: randomUUID(), traceId: randomUUID(), parentEventId: null, actor: "system", eventType: "user_message", payload: {}, timestamp: new Date(), createdAt: new Date() }),
     getEventsForTrace: vi.fn().mockResolvedValue([]),
-    getEvent: vi.fn().mockResolvedValue(null)
+    getEvent: vi.fn().mockResolvedValue(null),
+  };
+
+  const eventAppend = {
+    append: vi.fn().mockImplementation(async (event) => ({
+      ...event,
+      eventId: randomUUID(),
+      traceId: event.traceId,
+      parentEventId: event.parentEventId ?? null,
+      sequence: 1,
+      schemaVersion: 1,
+      payloadHash: "payload-hash",
+      previousEventHash: null,
+      eventHash: "event-hash",
+      timestamp: new Date(),
+      createdAt: new Date(),
+    })),
   };
 
   const planner = {
-    createPlanForTrace: vi.fn().mockResolvedValue(validPlan)
+    createPlanForTrace: vi.fn().mockResolvedValue(validPlan),
   };
 
   const llm = {
     providerName: "ollama",
     provider: { name: "ollama" },
     generateText: vi.fn(),
-    generateJSON: vi.fn()
+    generateJSON: vi.fn(),
   };
 
   const app = await buildApp({
     traces: traces as unknown as TraceRepository,
     events: events as unknown as EventRepository,
+    eventAppend: eventAppend as unknown as EventAppendService,
     planner: planner as unknown as PlannerService,
-    llm: llm as unknown as LLMRouter
+    llm: llm as unknown as LLMRouter,
   });
 
-  return { app, traces, events, planner, llm };
+  return { app, traces, events, eventAppend, planner, llm };
 }
 
 describe("chat planner flow", () => {
@@ -66,13 +108,13 @@ describe("chat planner flow", () => {
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { message: "Build AEON planner" }
+      payload: { message: "Build AEON planner" },
     });
 
     expect(response.statusCode).toBe(200);
     expect(planner.createPlanForTrace).toHaveBeenCalledOnce();
     expect(response.json()).toMatchObject({
-      message: `Plan created: ${validPlan.summary}`
+      message: `Plan created: ${validPlan.summary}`,
     });
   });
 
@@ -89,14 +131,14 @@ describe("chat planner flow", () => {
         eventType: "plan_created",
         payload: { plan: validPlan },
         timestamp: new Date(),
-        createdAt: new Date()
-      }
+        createdAt: new Date(),
+      },
     ]);
 
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { traceId, message: "show plan" }
+      payload: { traceId, message: "show plan" },
     });
 
     expect(response.statusCode).toBe(200);
@@ -104,7 +146,7 @@ describe("chat planner flow", () => {
     expect(response.json()).toMatchObject({
       message: validPlan.summary,
       requiresApproval: false,
-      plan: validPlan
+      plan: validPlan,
     });
   });
 
@@ -113,7 +155,7 @@ describe("chat planner flow", () => {
     const traceId = randomUUID();
     const planWithApproval: Plan = {
       ...validPlan,
-      steps: [{ ...validPlan.steps[0], requiresApproval: true }]
+      steps: [{ ...validPlan.steps[0], requiresApproval: true }],
     };
 
     events.getEventsForTrace.mockResolvedValueOnce([
@@ -125,20 +167,20 @@ describe("chat planner flow", () => {
         eventType: "plan_created",
         payload: { plan: planWithApproval },
         timestamp: new Date(),
-        createdAt: new Date()
-      }
+        createdAt: new Date(),
+      },
     ]);
 
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { traceId, message: "show plan" }
+      payload: { traceId, message: "show plan" },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       message: planWithApproval.summary,
-      requiresApproval: true
+      requiresApproval: true,
     });
   });
 
@@ -151,13 +193,13 @@ describe("chat planner flow", () => {
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { traceId, message: "show plan" }
+      payload: { traceId, message: "show plan" },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       message: "No stored plan found for this trace.",
-      relatedEventIds: [expect.any(String)]
+      relatedEventIds: [expect.any(String)],
     });
   });
 
@@ -175,20 +217,20 @@ describe("chat planner flow", () => {
         eventType: "trace_created",
         payload: {},
         timestamp: new Date(),
-        createdAt: new Date()
-      }
+        createdAt: new Date(),
+      },
     ]);
 
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { traceId, message: "show trace" }
+      payload: { traceId, message: "show trace" },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       message: "1 event(s) recorded.",
-      relatedEventIds: [expect.any(String)]
+      relatedEventIds: [expect.any(String)],
     });
   });
 
@@ -198,7 +240,7 @@ describe("chat planner flow", () => {
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { message: "" }
+      payload: { message: "" },
     });
 
     expect(response.statusCode).toBe(400);
@@ -210,7 +252,7 @@ describe("chat planner flow", () => {
     const response = await app.inject({
       method: "POST",
       url: "/chat",
-      payload: { message: "   " }
+      payload: { message: "   " },
     });
 
     expect(response.statusCode).toBe(400);

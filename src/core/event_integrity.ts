@@ -29,7 +29,7 @@ export function stableSerialize(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, stableSerialize(item)])
+      .map(([key, item]) => [key, stableSerialize(item)]),
   );
 }
 
@@ -52,10 +52,48 @@ export function hashEvent(inputs: HashInputs): string {
     inputs.eventType,
     inputs.payloadHash,
     inputs.previousEventHash ?? "",
-    createdAt
+    createdAt,
   ];
 
   return sha256(parts.join("|"));
+}
+
+export function verifyPayloadHash(event: EventRead): boolean {
+  return event.payloadHash === hashPayload(event.payload);
+}
+
+export function verifyEventHash(
+  event: EventRead,
+  previousEventHash: string | null,
+): boolean {
+  const expectedEventHash = hashEvent({
+    schemaVersion: event.schemaVersion,
+    traceId: event.traceId,
+    sequence: event.sequence,
+    parentEventId: event.parentEventId,
+    actor: event.actor,
+    eventType: event.eventType,
+    payloadHash: hashPayload(event.payload),
+    previousEventHash,
+    createdAt: event.createdAt,
+  });
+
+  return event.eventHash === expectedEventHash;
+}
+
+export function verifyHashChain(events: EventRead[]): boolean {
+  let previousEventHash: string | null = null;
+
+  return events.every((event, index) => {
+    const expectedPreviousEventHash =
+      index === 0 ? null : events[index - 1].eventHash;
+    const validPreviousLink =
+      event.previousEventHash === expectedPreviousEventHash;
+    const validPayloadHash = verifyPayloadHash(event);
+    const validEventHash = verifyEventHash(event, previousEventHash);
+    previousEventHash = event.eventHash;
+    return validPreviousLink && validPayloadHash && validEventHash;
+  });
 }
 
 export function toEventRead(row: Record<string, unknown>): EventRead {
@@ -66,14 +104,18 @@ export function toEventRead(row: Record<string, unknown>): EventRead {
     sequence: Number(row.sequence),
     schemaVersion: Number(row.schema_version),
     payloadHash: row.payload_hash ? String(row.payload_hash) : null,
-    previousEventHash: row.previous_event_hash ? String(row.previous_event_hash) : null,
+    previousEventHash: row.previous_event_hash
+      ? String(row.previous_event_hash)
+      : null,
     eventHash: row.event_hash ? String(row.event_hash) : null,
-    idempotencyKey: row.idempotency_key ? String(row.idempotency_key) : undefined,
+    idempotencyKey: row.idempotency_key
+      ? String(row.idempotency_key)
+      : undefined,
     actor: String(row.actor),
     eventType: String(row.event_type),
     payload: row.payload as Record<string, unknown>,
     timestamp: row.timestamp as Date,
-    createdAt: row.created_at as Date
+    createdAt: row.created_at as Date,
   };
 }
 
@@ -85,14 +127,16 @@ export function toEventReadFromSelect(row: Record<string, unknown>): EventRead {
     sequence: Number(row.sequence),
     schemaVersion: Number(row.schemaVersion),
     payloadHash: row.payloadHash ? String(row.payloadHash) : null,
-    previousEventHash: row.previousEventHash ? String(row.previousEventHash) : null,
+    previousEventHash: row.previousEventHash
+      ? String(row.previousEventHash)
+      : null,
     eventHash: row.eventHash ? String(row.eventHash) : null,
     idempotencyKey: row.idempotencyKey ? String(row.idempotencyKey) : undefined,
     actor: String(row.actor),
     eventType: String(row.eventType),
     payload: row.payload as Record<string, unknown>,
     timestamp: row.timestamp as Date,
-    createdAt: row.createdAt as Date
+    createdAt: row.createdAt as Date,
   };
 }
 
@@ -103,6 +147,6 @@ export function toEventCreate(input: EventCreate): EventCreate {
     actor: input.actor,
     eventType: input.eventType,
     payload: input.payload,
-    idempotencyKey: input.idempotencyKey
+    idempotencyKey: input.idempotencyKey,
   };
 }

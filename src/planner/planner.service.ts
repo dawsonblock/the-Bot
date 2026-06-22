@@ -2,9 +2,16 @@ import { EventAppendService } from "../core/event_append_service.js";
 import { EventRepository, TraceRepository } from "../db/index.js";
 import { LLMProviderError } from "../llm/llm-errors.js";
 import { LLMRouter } from "../llm/llm-router.js";
-import { buildPlannerPrompt, buildPlannerSystemPrompt } from "../llm/prompts/planner.prompt.js";
+import {
+  buildPlannerPrompt,
+  buildPlannerSystemPrompt,
+} from "../llm/prompts/planner.prompt.js";
 import { PlanSchema, type Plan } from "../schemas/plan.schema.js";
 import { OutcomePredictorService } from "./outcome-predictor.service.js";
+import {
+  parsePlannerJSON,
+  PlannerOutputParseError,
+} from "./planner-output-parser.js";
 
 export class PlannerService {
   constructor(
@@ -12,7 +19,7 @@ export class PlannerService {
     private readonly events: EventRepository,
     private readonly llm: LLMRouter,
     private readonly eventAppend: EventAppendService,
-    private readonly outcomePredictor = new OutcomePredictorService()
+    private readonly outcomePredictor = new OutcomePredictorService(),
   ) {}
 
   async createPlanForTrace(traceId: string): Promise<Plan> {
@@ -30,30 +37,30 @@ export class PlannerService {
         traceId,
         actor: "planner",
         eventType: "llm_call_requested",
-        payload: { schemaName: "Plan" }
+        payload: { schemaName: "Plan" },
       });
 
       const rawPlan = await this.llm.generateJSON<unknown>({
         system,
         prompt,
-        schemaName: "Plan"
+        schemaName: "Plan",
       });
 
-      const plan = PlanSchema.parse(rawPlan);
+      const plan = PlanSchema.parse(parsePlannerJSON(rawPlan));
       const normalizedPlan = this.normalizePlan(trace.goal, plan);
 
       await this.eventAppend.append({
         traceId,
         actor: "planner",
         eventType: "llm_call_completed",
-        payload: { schemaName: "Plan" }
+        payload: { schemaName: "Plan" },
       });
 
       await this.eventAppend.append({
         traceId,
         actor: "planner",
         eventType: "plan_created",
-        payload: { plan: normalizedPlan }
+        payload: { plan: normalizedPlan },
       });
 
       for (const step of normalizedPlan.steps) {
@@ -62,14 +69,14 @@ export class PlannerService {
           traceId,
           actor: "planner",
           eventType: "outcome_prediction_created",
-          payload: { stepNumber: step.stepNumber, prediction }
+          payload: { stepNumber: step.stepNumber, prediction },
         });
 
         await this.eventAppend.append({
           traceId,
           actor: "planner",
           eventType: "plan_step_created",
-          payload: { step }
+          payload: { step },
         });
       }
 
@@ -85,8 +92,13 @@ export class PlannerService {
       await this.eventAppend.append({
         traceId,
         actor: "planner",
-        eventType: error instanceof LLMProviderError ? "llm_call_failed" : "planner_failed",
-        payload: { error: error instanceof Error ? error.message : String(error) }
+        eventType:
+          error instanceof LLMProviderError
+            ? "llm_call_failed"
+            : "planner_failed",
+        payload: {
+          error: error instanceof Error ? error.message : String(error),
+        },
       });
     } catch (appendError) {
       console.error("Failed to append planner failure event", appendError);
@@ -98,13 +110,13 @@ export class PlannerService {
       .sort((a, b) => a.stepNumber - b.stepNumber)
       .map((step, index) => ({
         ...step,
-        stepNumber: index + 1
+        stepNumber: index + 1,
       }));
 
     return PlanSchema.parse({
       ...plan,
       goal,
-      steps
+      steps,
     });
   }
 }

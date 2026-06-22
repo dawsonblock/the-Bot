@@ -12,6 +12,8 @@
     "start": "tsx src/main.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx src/db/run-migrations.ts",
+    "db:rollback": "tsx src/db/rollback-migrations.ts",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {

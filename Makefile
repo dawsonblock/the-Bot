@@ -1,21 +1,21 @@
-.PHONY: dev-db test dev typecheck test-ts dev-ts
+.PHONY: dev-db test dev typecheck db-migrate db-rollback test-all
 
 dev-db:
 	docker compose up -d
 
 test:
-	pytest
+	npm test
 
 dev:
-	uvicorn aeon.main:app --reload
+	npm run dev
 
 typecheck:
 	npm run typecheck
 
-test-ts:
-	npm test
+db-migrate:
+	npm run db:migrate
 
-test-all: typecheck test-ts
+db-rollback:
+	npm run db:rollback
 
-dev-ts:
-	npm run dev
+test-all: typecheck test

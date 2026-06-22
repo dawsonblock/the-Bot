@@ -3,7 +3,12 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/db.js";
 import { events, traces } from "../db/schema.js";
 import type { EventCreate, EventRead } from "../models/event.model.js";
-import { hashEvent, hashPayload, toEventCreate, toEventReadFromSelect } from "./event_integrity.js";
+import {
+  hashEvent,
+  hashPayload,
+  toEventCreate,
+  toEventReadFromSelect,
+} from "./event_integrity.js";
 
 export interface AppendEventInput extends Omit<EventCreate, "parentEventId"> {
   parentEventId?: string | null;
@@ -14,20 +19,81 @@ export interface LatestEventState {
   eventHash: string | null;
 }
 
+export type AppendDatabase = {
+  transaction: <T>(fn: (tx: any) => Promise<T>) => Promise<T>;
+  insert: any;
+  select: any;
+  execute: any;
+};
+
 export class EventAppendService {
-  constructor(private readonly database = db) {}
+  constructor(
+    private readonly database: AppendDatabase = db as AppendDatabase,
+  ) {}
 
   async append(input: AppendEventInput): Promise<EventRead> {
-    const event = toEventCreate({ ...input, parentEventId: input.parentEventId ?? null });
-    const latest = await this.getLatestState(event.traceId);
-    const parentEvent = event.parentEventId
-      ? await this.getEventById(event.parentEventId)
-      : null;
+    return this.database.transaction(async (tx: any) =>
+      this.appendInTransaction(input, tx),
+    );
+  }
 
-    if (event.parentEventId && (!parentEvent || parentEvent.traceId !== event.traceId)) {
-      throw new Error(`Parent event ${event.parentEventId} does not belong to trace ${event.traceId}`);
+  async appendBatch(
+    traceId: string,
+    batch: AppendEventInput[],
+  ): Promise<EventRead[]> {
+    if (batch.length === 0) {
+      return [];
     }
 
+    return this.database.transaction(async (tx: any) => {
+      const appended: EventRead[] = [];
+
+      for (const event of batch) {
+        const parentEventId =
+          appended.length > 0
+            ? appended.at(-1)!.eventId
+            : (event.parentEventId ?? null);
+        appended.push(
+          await this.appendInTransaction(
+            {
+              ...event,
+              traceId,
+              parentEventId,
+            },
+            tx,
+          ),
+        );
+      }
+
+      return appended;
+    });
+  }
+
+  private async appendInTransaction(
+    input: AppendEventInput,
+    tx: any,
+  ): Promise<EventRead> {
+    const event = toEventCreate({
+      ...input,
+      parentEventId: input.parentEventId ?? null,
+    });
+
+    await this.lockTrace(tx, event.traceId);
+
+    const parentEvent = event.parentEventId
+      ? await this.getEventById(tx, event.parentEventId)
+      : null;
+
+    if (
+      event.parentEventId &&
+      (!parentEvent || parentEvent.traceId !== event.traceId)
+    ) {
+      throw new Error(
+        `Parent event ${event.parentEventId} does not belong to trace ${event.traceId}`,
+      );
+    }
+
+    const latest = await this.getLatestState(tx, event.traceId);
     const sequence = latest.sequence + 1;
     const parentEventId = event.parentEventId ?? null;
     const payloadHash = hashPayload(event.payload);
@@ -41,10 +107,10 @@ export class EventAppendService {
       eventType: event.eventType,
       payloadHash,
       previousEventHash: latest.eventHash,
-      createdAt
+      createdAt,
     });
 
-    return this.database
+    return tx
       .insert(events)
       .values({
         traceId: event.traceId,
@@ -58,7 +124,7 @@ export class EventAppendService {
         actor: event.actor,
         eventType: event.eventType,
         payload: event.payload,
-        createdAt
+        createdAt,
       })
       .returning({
         eventId: events.eventId,
@@ -74,9 +140,10 @@ export class EventAppendService {
         eventType: events.eventType,
         payload: events.payload,
         timestamp: events.timestamp,
-        createdAt: events.createdAt
+        createdAt: events.createdAt,
       })
-      .then(([created]) => {
+      .then((createdRows: Record<string, unknown>[]) => {
+        const [created] = createdRows;
         if (!created) {
           throw new Error("Failed to create event");
         }
@@ -84,26 +151,20 @@ export class EventAppendService {
       });
   }
 
-  async appendBatch(traceId: string, batch: AppendEventInput[]): Promise<EventRead[]> {
-    const appended: EventRead[] = [];
-
-    for (const event of batch) {
-      const parentEventId = appended.length > 0 ? appended.at(-1)!.eventId : event.parentEventId ?? null;
-      appended.push(await this.append({
-        ...event,
-        traceId,
-        parentEventId
-      }));
-    }
-
-    return appended;
+  private async lockTrace(tx: any, traceId: string) {
+    await tx.execute(
+      sql`SELECT trace_id FROM traces WHERE trace_id = ${traceId} FOR UPDATE`,
+    );
   }
 
-  private async getLatestState(traceId: string): Promise<LatestEventState> {
-    const [latest] = await this.database
+  private async getLatestState(
+    tx: any,
+    traceId: string,
+  ): Promise<LatestEventState> {
+    const [latest] = await tx
       .select({
         sequence: events.sequence,
-        eventHash: events.eventHash
+        eventHash: events.eventHash,
       })
       .from(events)
       .where(eq(events.traceId, traceId))
@@ -112,14 +173,14 @@ export class EventAppendService {
 
     return {
       sequence: latest?.sequence ?? 0,
-      eventHash: latest?.eventHash ?? null
+      eventHash: latest?.eventHash ?? null,
     };
   }
 
-  private async getEventById(eventId: string) {
-    const [event] = await this.database
+  private async getEventById(tx: any, eventId: string) {
+    const [event] = await tx
       .select({
-        traceId: events.traceId
+        traceId: events.traceId,
       })
       .from(events)
       .where(eq(events.eventId, eventId))

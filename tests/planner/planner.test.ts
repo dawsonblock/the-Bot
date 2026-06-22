@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { PlannerService } from "../../src/planner/planner.service.js";
-import { EventAppendService } from "../../src/core/event_append_service.js";
 import type { EventRead } from "../../src/models/event.model.js";
 import type { TraceRead } from "../../src/models/trace.model.js";
 import type { LLMRouter } from "../../src/llm/llm-router.js";
@@ -15,7 +14,7 @@ const trace: TraceRead = {
   startTime: new Date("2026-06-21T00:00:00.000Z"),
   endTime: null,
   metrics: {},
-  createdAt: new Date("2026-06-21T00:00:00.000Z")
+  createdAt: new Date("2026-06-21T00:00:00.000Z"),
 };
 
 const validPlan: Plan = {
@@ -28,7 +27,7 @@ const validPlan: Plan = {
       actionType: "inspect",
       expectedResult: "Project files and current state are understood.",
       riskLevel: "low",
-      requiresApproval: false
+      requiresApproval: false,
     },
     {
       stepNumber: 2,
@@ -36,7 +35,7 @@ const validPlan: Plan = {
       actionType: "ask_user",
       expectedResult: "User confirms or corrects assumptions.",
       riskLevel: "low",
-      requiresApproval: true
+      requiresApproval: true,
     },
     {
       stepNumber: 3,
@@ -44,61 +43,99 @@ const validPlan: Plan = {
       actionType: "verify",
       expectedResult: "Tests pass and plan is trusted.",
       riskLevel: "low",
-      requiresApproval: false
-    }
+      requiresApproval: false,
+    },
   ],
   assumptions: ["No autonomous execution is allowed in this milestone."],
-  risks: ["LLM may return an invalid plan schema."]
+  risks: ["LLM may return an invalid plan schema."],
 };
+
+function createAppendedEvent(
+  event: Partial<EventRead> &
+    Pick<EventRead, "traceId" | "actor" | "eventType" | "payload">,
+): EventRead {
+  return {
+    eventId: randomUUID(),
+    traceId: event.traceId,
+    parentEventId: null,
+    sequence: 1,
+    schemaVersion: 1,
+    payloadHash: "payload-hash",
+    previousEventHash: null,
+    eventHash: "event-hash",
+    idempotencyKey: event.idempotencyKey,
+    actor: event.actor,
+    eventType: event.eventType,
+    payload: event.payload,
+    timestamp: new Date(),
+    createdAt: new Date(),
+  };
+}
 
 function createPlanner(llm: Partial<LLMRouter>, events: EventRead[] = []) {
   const traces = {
-    getTrace: vi.fn().mockResolvedValue(trace)
+    getTrace: vi.fn().mockResolvedValue(trace),
   };
 
   const eventRepository = {
     getEventsForTrace: vi.fn().mockResolvedValue(events),
-    appendEvent: vi.fn().mockImplementation(async (event: Omit<EventRead, "eventId" | "timestamp" | "created_at">) => ({
-      ...event,
-      eventId: randomUUID(),
-      timestamp: new Date(),
-      createdAt: new Date()
-    }))
+  };
+
+  const eventAppend = {
+    append: vi
+      .fn()
+      .mockImplementation(async (event: EventRead) =>
+        createAppendedEvent(event),
+      ),
   };
 
   const planner = new PlannerService(
     traces as any,
     eventRepository as any,
     llm as LLMRouter,
-    {} as EventAppendService
+    eventAppend as any,
   );
 
-  return { planner, traces, eventRepository };
+  return { planner, traces, eventRepository, eventAppend };
 }
 
 describe("PlannerService", () => {
   it("creates a valid plan and writes plan events", async () => {
-    const { planner, eventRepository } = createPlanner({
-      generateJSON: vi.fn().mockResolvedValue(validPlan)
+    const { planner, eventAppend } = createPlanner({
+      generateJSON: vi.fn().mockResolvedValue(validPlan),
     });
 
     const plan = await planner.createPlanForTrace(trace.traceId);
 
     expect(plan.summary).toBe(validPlan.summary);
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "llm_call_requested" }));
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "llm_call_completed" }));
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "plan_created" }));
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "outcome_prediction_created" }));
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "plan_step_created" }));
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "llm_call_requested" }),
+    );
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "llm_call_completed" }),
+    );
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "plan_created" }),
+    );
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "outcome_prediction_created" }),
+    );
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "plan_step_created" }),
+    );
   });
 
   it("rejects invalid LLM JSON", async () => {
-    const { planner, eventRepository } = createPlanner({
-      generateJSON: vi.fn().mockRejectedValue(new SyntaxError("invalid json"))
+    const { planner, eventAppend } = createPlanner({
+      generateJSON: vi.fn().mockRejectedValue(new SyntaxError("invalid json")),
     });
 
-    await expect(planner.createPlanForTrace(trace.traceId)).rejects.toThrow("invalid json");
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "planner_failed" }));
+    await expect(planner.createPlanForTrace(trace.traceId)).rejects.toThrow(
+      "invalid json",
+    );
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "planner_failed" }),
+    );
   });
 
   it("normalizes plan step order and renumbers safely", async () => {
@@ -107,20 +144,22 @@ describe("PlannerService", () => {
       steps: [
         { ...validPlan.steps[1], stepNumber: 3 },
         { ...validPlan.steps[0], stepNumber: 1 },
-        { ...validPlan.steps[2], stepNumber: 2 }
-      ]
+        { ...validPlan.steps[2], stepNumber: 2 },
+      ],
     };
 
     const { planner } = createPlanner({
-      generateJSON: vi.fn().mockResolvedValue(shuffledPlan)
+      generateJSON: vi.fn().mockResolvedValue(shuffledPlan),
     });
 
     const plan = await planner.createPlanForTrace(trace.traceId);
 
-    expect(plan.steps.map((step) => [step.stepNumber, step.description])).toEqual([
+    expect(
+      plan.steps.map((step) => [step.stepNumber, step.description]),
+    ).toEqual([
       [1, validPlan.steps[0].description],
       [2, validPlan.steps[2].description],
-      [3, validPlan.steps[1].description]
+      [3, validPlan.steps[1].description],
     ]);
   });
 
@@ -130,16 +169,18 @@ describe("PlannerService", () => {
       steps: [
         {
           ...validPlan.steps[0],
-          actionType: "shell"
-        }
-      ]
+          actionType: "shell",
+        },
+      ],
     };
 
-    const { planner, eventRepository } = createPlanner({
-      generateJSON: vi.fn().mockResolvedValue(unsafePlan)
+    const { planner, eventAppend } = createPlanner({
+      generateJSON: vi.fn().mockResolvedValue(unsafePlan),
     });
 
     await expect(planner.createPlanForTrace(trace.traceId)).rejects.toThrow();
-    expect(eventRepository.appendEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "planner_failed" }));
+    expect(eventAppend.append).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "planner_failed" }),
+    );
   });
 });

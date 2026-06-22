@@ -7,10 +7,10 @@ services:
       POSTGRES_PASSWORD: aeon
       POSTGRES_DB: aeon
     ports:
-      - "5432:5432"
+      - 5432:5432
     volumes:
       - aeon_pgdata:/var/lib/postgresql/data
-      - ./aeon/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - ./src/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
 
 volumes:
   aeon_pgdata:

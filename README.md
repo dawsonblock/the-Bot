@@ -1,13 +1,8 @@
-# AEON v0.1
+# AEON v0.1-alpha TypeScript spine
 
-AEON is a local-first, event-sourced, verifier-driven AI operating spine.
+AEON is a local-first, event-sourced, verifier-driven AI task control-plane spine.
 
-This workspace currently contains two milestones:
-
-1. **AEON v0.1-alpha Python FastAPI spine**: PostgreSQL-backed traces, append-only events, and a health endpoint.
-2. **AEON v0.1 TypeScript Fastify milestone**: local-first LLM router, planner stub, outcome predictor stub, plan events, and chat-to-plan flow.
-
-The active TypeScript implementation is the next milestone target.
+This is not yet an autonomous bot. The active implementation is the TypeScript Fastify backend. The archived Python FastAPI spine is retained only as historical reference under `archive/python-fastapi-spine/` and is not the active runtime path.
 
 ## Scope
 
@@ -16,6 +11,8 @@ Implemented in the TypeScript Fastify backend:
 - Fastify API app
 - PostgreSQL/Drizzle trace and event repositories
 - Event-sourced trace creation and retrieval
+- Event append service with payload/event hashing and hash-chain fields
+- Parent-event trace validation
 - Chat-to-plan flow for new goals
 - `show plan`, `show trace`, and `show events` chat commands
 - LLM provider abstraction
@@ -23,11 +20,11 @@ Implemented in the TypeScript Fastify backend:
 - Provider selection through `LLM_PROVIDER` or constructor options
 - Planner stub using JSON-only LLM responses
 - Outcome predictor stub with rule-based risk mapping
-- Plan and plan-step events written to the event log
+- Plan and plan-step events written through the append service
 - Vitest coverage for router, planner, chat planner flow, and trace/event routes
 - Request validation, LLM provider timeout handling, and safer Gemini key transport
 - Graceful Fastify shutdown and database pool cleanup
-- Drizzle schema indexes aligned with the Python schema indexes
+- Runtime migration scripts and PostgreSQL init SQL for the TypeScript path
 
 Not implemented yet:
 
@@ -42,8 +39,8 @@ Not implemented yet:
 
 - Node.js 22+
 - npm 10+
-- Optional: PostgreSQL 16+ for runtime persistence
-- Optional: Docker Compose for the original Python FastAPI spine
+- PostgreSQL 16+ for runtime persistence
+- Docker Compose for a local PostgreSQL instance
 
 ## Quick start
 
@@ -51,6 +48,8 @@ Not implemented yet:
 npm install
 npm run typecheck
 npm test
+docker compose up -d
+DATABASE_URL=postgresql://aeon:aeon@localhost:5432/aeon npm run db:migrate
 npm run dev
 ```
 
@@ -101,7 +100,11 @@ The router exposes a small provider abstraction:
 ```ts
 interface LLMProvider {
   generateText(input: { system: string; prompt: string }): Promise<string>;
-  generateJSON<T>(input: { system: string; prompt: string; schemaName: string }): Promise<T>;
+  generateJSON<T>(input: {
+    system: string;
+    prompt: string;
+    schemaName: string;
+  }): Promise<T>;
 }
 ```
 
@@ -148,7 +151,7 @@ npm run typecheck
 npm test
 ```
 
-Expected test result:
+Current honest status after a clean local install:
 
 ```text
 Test Files  4 passed
@@ -161,19 +164,6 @@ Coverage is available with:
 npm run test:coverage
 ```
 
-## Python FastAPI spine
+## Archived Python FastAPI spine
 
-The original Python FastAPI spine remains present for historical continuity. Its verification path is:
-
-```bash
-docker compose up -d
-pytest
-uvicorn aeon.main:app --reload
-curl http://localhost:8000/health
-```
-
-Expected health response:
-
-```json
-{"status":"ok"}
-```
+The original Python FastAPI spine remains under `archive/python-fastapi-spine/` for historical continuity only. It is not the active runtime path, and the root Makefile no longer points `test` or `dev` at Python commands.
